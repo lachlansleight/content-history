@@ -1,8 +1,11 @@
 export interface ContentEvent {
+    id: number;
     type: "youtube" | "spotify";
     title: string;
     time: Date;
 }
+
+export type EitherContentEvent = YoutubeContentEvent | SpotifyContentEvent;
 
 export interface SpotifyContentEvent extends ContentEvent {
     type: "spotify";
@@ -20,9 +23,9 @@ export interface YoutubeContentEvent extends ContentEvent {
 //youtube type check
 export const isYoutubeContentEvent = (event: ContentEvent): event is YoutubeContentEvent => {
     return event.type === "youtube";
-}
+};
 
 //spotify type check
 export const isSpotifyContentEvent = (event: ContentEvent): event is SpotifyContentEvent => {
     return event.type === "spotify";
-}
+};

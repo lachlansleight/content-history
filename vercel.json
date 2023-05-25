@@ -1,0 +1,8 @@
+{
+    "crons": [
+        {
+            "path": "/api/updateFromLastFm",
+            "schedule": "0 5 * * *"
+        }
+    ]
+}

@@ -13,6 +13,7 @@
         "test:watch": "jest --watchAll"
     },
     "dependencies": {
+        "@prisma/client": "^4.14.1",
         "axios": "latest",
         "dayjs": "latest",
         "next": "latest",
@@ -39,6 +40,7 @@
         "lint-staged": "latest",
         "postcss": "latest",
         "prettier": "latest",
+        "prisma": "^4.14.1",
         "tailwindcss": "latest",
         "typescript": "latest"
     }
