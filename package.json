@@ -10,7 +10,8 @@
         "lint": "eslint . --ext ts --ext tsx --ext js",
         "combo": "format && lint && type-check",
         "test": "jest",
-        "test:watch": "jest --watchAll"
+        "test:watch": "jest --watchAll",
+        "postinstall": "prisma generate"
     },
     "dependencies": {
         "@prisma/client": "^4.14.1",
