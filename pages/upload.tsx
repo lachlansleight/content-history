@@ -7,8 +7,6 @@ import { convertSpotifyEvent } from "lib/spotifyConversion";
 import {
     ContentEvent,
     EitherContentEvent,
-    SpotifyContentEvent,
-    YoutubeContentEvent,
     isSpotifyContentEvent,
     isYoutubeContentEvent,
 } from "lib/types";
@@ -16,6 +14,7 @@ import YoutubeEvent from "components/YoutubeEvent";
 import SpotifyEvent from "components/SpotifyEvent";
 import Button from "components/UserInput/atoms/Button";
 import ProgressBar from "components/ProgressBar";
+import ButtonLink from "components/UserInput/atoms/ButtonLink";
 
 const readFileAsync = async (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -35,11 +34,12 @@ const readFileAsync = async (file: File): Promise<string> => {
 };
 
 const UploadPage = (): JSX.Element => {
-    const [testFiles, setTestFiles] = useState<File[]>([]);
-    const [fileContent, setFileContent] = useState<Record<string, string>>({});
+    const [filesToConvert, setFilesToConvert] = useState<File[]>([]);
+    const [transformedDownloadUrl, setTransformedDownloadUrl] = useState("");
 
-    const [contentEvents, setContentEvents] = useState<Record<string, ContentEvent[]>>({});
-    const [flatEvents, setFlatEvents] = useState<ContentEvent[]>([]);
+    const [filesToUpload, setFilesToUpload] = useState<File[]>([]);
+    const [eventsToUpload, setEventsToUpload] = useState<ContentEvent[]>([]);
+
     const [viewCount] = useState(1000);
     const [minIndex, setMinIndex] = useState(0);
 
@@ -53,102 +53,79 @@ const UploadPage = (): JSX.Element => {
             return fileContents;
         };
 
-        if (testFiles.length === 0) return;
-        setFileContent({});
-        loadFiles(testFiles).then(data => {
-            const out: Record<string, string> = {};
-            for (let i = 0; i < testFiles.length; i++) {
-                out[testFiles[i].name] = data[i];
-            }
-            setFileContent(out);
+        if (filesToUpload.length === 0) return;
+        loadFiles(filesToUpload).then(data => {
+            const parsed = JSON.parse(data[0]);
+            const alreadyDone: number[] = JSON.parse(
+                localStorage.getItem("alreadyDoneEvents") || "[]"
+            );
+            const filtered = parsed.filter((e: any) => !alreadyDone.includes(e.id));
+            setEventsToUpload(filtered);
         });
-    }, [testFiles]);
+    }, [filesToUpload]);
 
+    //Convert the raw JSON output into a nice list of content events to be pushed into the DB, with (unique, local-only!) IDs
     useEffect(() => {
-        if (Object.keys(fileContent).length === 0) return;
+        const loadFiles = async (files: File[]) => {
+            const fileContents = await Promise.all(files.map(file => readFileAsync(file)));
+            return fileContents;
+        };
 
-        const spotifyEvents: SpotifyContentEvent[] = [];
-        const youtubeEvents: YoutubeContentEvent[] = [];
-        const newEvents: Record<string, EitherContentEvent[]> = {};
-
-        let id = 1;
-        Object.keys(fileContent).forEach(fileName => {
-            newEvents[fileName] = [];
-
-            const content = fileContent[fileName];
-            const jsonData = JSON.parse(content) as any[];
-
-            jsonData.forEach(raw => {
-                if (raw.ms_played != null) {
-                    const se = convertSpotifyEvent(raw);
-                    if (se.title) {
-                        spotifyEvents.push({ ...se, id });
-                        newEvents[fileName].push({ ...se, id });
-                        id++;
+        if (filesToConvert.length === 0) return;
+        const doConvert = async (files: File[]) => {
+            const contents = await loadFiles(files);
+            const events: EitherContentEvent[] = [];
+            contents.forEach(content => {
+                const data = JSON.parse(content) as any[];
+                data.forEach(raw => {
+                    if (raw.ms_played != null) {
+                        const se = convertSpotifyEvent(raw);
+                        if (se?.title) {
+                            se.id = events.length + 1;
+                            events.push(se);
+                        }
+                    } else {
+                        const yte = convertYoutubeEvent(raw);
+                        if (yte?.title) {
+                            yte.id = events.length + 1;
+                            events.push(yte);
+                        }
                     }
-                } else {
-                    const yte = convertYoutubeEvent(raw);
-                    if (yte) {
-                        youtubeEvents.push({ ...yte, id });
-                        newEvents[fileName].push({ ...yte, id });
-                        id++;
-                    }
-                }
+                });
             });
-        });
-        setContentEvents(newEvents);
-        const allEvents = [...spotifyEvents, ...youtubeEvents];
-        setFlatEvents(allEvents.sort((a, b) => b.time.valueOf() - a.time.valueOf()));
-    }, [fileContent]);
+            const sortedEvents = events.sort((a, b) => b.time.valueOf() - a.time.valueOf());
+            sortedEvents.forEach((e, i) => (e.id = i + 1));
+            setTransformedDownloadUrl(
+                URL.createObjectURL(
+                    new Blob([JSON.stringify(sortedEvents)], { type: "application/json" })
+                )
+            );
+        };
+        doConvert(filesToConvert);
+    }, [filesToConvert]);
 
-    const doUpload = async (events: Record<string, ContentEvent[]>, batchSize: number) => {
+    const doUpload = async (events: ContentEvent[], batchSize: number) => {
         setLoading(true);
         setProgress(0);
 
         const alreadyDoneEventsStore = localStorage.getItem("alreadyDoneEvents");
-        const alreadyDoneEvents: string[] = alreadyDoneEventsStore
+        const alreadyDoneEvents: number[] = alreadyDoneEventsStore
             ? JSON.parse(alreadyDoneEventsStore)
             : [];
-        const newlyDoneEvents: string[] = [];
+        const batchCount = Math.ceil(events.length / batchSize);
 
-        const filteredEvents: Record<string, ContentEvent[]> = {};
-        Object.keys(events).forEach(fileName => {
-            filteredEvents[fileName] = events[fileName].filter(event => {
-                return !alreadyDoneEvents.includes(fileName + "_" + event.id.toString());
-            });
-        });
+        for (let i = 0; i < events.length; i += batchSize) {
+            const batch = events.slice(i, i + batchSize);
+            alreadyDoneEvents.push(...batch.map(e => e.id));
 
-        const fileKeys = Object.keys(filteredEvents);
-        const batchCounts = fileKeys.map(fn => Math.ceil(filteredEvents[fn].length / batchSize));
-        const batchCount = batchCounts.reduce((a, b) => a + b, 0);
+            setLoadingMessage(`Adding Batch ${i + 1} / ${batchCount}`);
+            localStorage.setItem("alreadyDoneEvents", JSON.stringify(alreadyDoneEvents));
 
-        const eventsThatWereFiltered = events[fileKeys[0]].filter(
-            e => filteredEvents[fileKeys[0]].findIndex(ee => ee.title === e.title) === -1
-        );
-        console.log({ eventsThatWereFiltered });
+            const res = await axios.post("/api/content", { content: batch });
+            console.log(res.data);
+            setEventsToUpload(cur => cur.filter(e => !batch.find(ee => ee.id === e.id)));
 
-        let totalDone = 0;
-        for (let i = 0; i < fileKeys.length; i++) {
-            for (let j = 0; j < batchCounts[i]; j++) {
-                setLoadingMessage(
-                    `Adding File ${i + 1}/${fileKeys.length}, Batch ${j + 1} / ${batchCounts[i]}`
-                );
-
-                const eventsToUpload = filteredEvents[fileKeys[i]].slice(
-                    j * batchSize,
-                    (j + 1) * batchSize
-                );
-                newlyDoneEvents.push(
-                    ...eventsToUpload.map(event => fileKeys[i] + "_" + event.id.toString())
-                );
-                localStorage.setItem("alreadyDoneEvents", JSON.stringify(newlyDoneEvents));
-
-                const res = await axios.post("/api/content", { content: eventsToUpload });
-                console.log(res.data);
-
-                totalDone++;
-                setProgress(totalDone / batchCount);
-            }
+            setProgress((i + batch.length) / events.length);
         }
         setLoading(false);
     };
@@ -157,19 +134,51 @@ const UploadPage = (): JSX.Element => {
         <Layout>
             <div className="flex flex-col gap-2">
                 <div>
+                    <div className="flex flex-col gap-2">
+                        <FileField
+                            value={filesToConvert}
+                            onChange={setFilesToConvert}
+                            id="files"
+                            label="Files to Convert"
+                            options={{
+                                accept: undefined,
+                                maxSize: undefined,
+                                multiple: true,
+                            }}
+                        />
+                    </div>
+                    <div className="flex gap-4 justify-center">
+                        <Button
+                            className="bg-primary-700 rounded px-2 py-1 text-lg"
+                            onClick={() => localStorage.removeItem("alreadyDoneEvents")}
+                        >
+                            Clear cached event IDs
+                        </Button>
+                        {transformedDownloadUrl && (
+                            <ButtonLink
+                                download="content-data.json"
+                                href={transformedDownloadUrl}
+                                className="bg-primary-500 rounded px-2 py-1 text-lg mb-4"
+                            >
+                                Download Converted Data
+                            </ButtonLink>
+                        )}
+                    </div>
+                </div>
+                <div>
                     <FileField
-                        value={testFiles}
-                        onChange={setTestFiles}
+                        value={filesToUpload}
+                        onChange={setFilesToUpload}
                         id="files"
-                        label="Files"
+                        label="Converted File"
                         options={{
                             accept: undefined,
                             maxSize: undefined,
-                            multiple: true,
+                            multiple: false,
                         }}
                     />
                 </div>
-                {flatEvents.length > 0 && (
+                {eventsToUpload.length > 0 && (
                     <>
                         {loading ? (
                             <div>
@@ -179,7 +188,7 @@ const UploadPage = (): JSX.Element => {
                         ) : (
                             <Button
                                 className="bg-primary-700 rounded px-2 py-1 text-lg"
-                                onClick={() => doUpload(contentEvents, 5)}
+                                onClick={() => doUpload(eventsToUpload, 10)}
                             >
                                 Upload to DB
                             </Button>
@@ -195,19 +204,21 @@ const UploadPage = (): JSX.Element => {
                             <Button
                                 className="bg-primary-700 rounded px-2 py-1 text-lg"
                                 onClick={() => setMinIndex(cur => cur + viewCount)}
-                                disabled={minIndex >= flatEvents.length - viewCount}
+                                disabled={minIndex >= eventsToUpload.length - viewCount}
                             >
                                 Next Page
                             </Button>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
-                            {flatEvents.slice(minIndex, minIndex + viewCount).map((event, i) => {
-                                if (isYoutubeContentEvent(event)) {
-                                    return <YoutubeEvent key={i} event={event} />;
-                                } else if (isSpotifyContentEvent(event)) {
-                                    return <SpotifyEvent key={i} event={event} />;
-                                } else return null;
-                            })}
+                            {eventsToUpload
+                                .slice(minIndex, minIndex + viewCount)
+                                .map((event, i) => {
+                                    if (isYoutubeContentEvent(event)) {
+                                        return <YoutubeEvent key={i} event={event} />;
+                                    } else if (isSpotifyContentEvent(event)) {
+                                        return <SpotifyEvent key={i} event={event} />;
+                                    } else return null;
+                                })}
                         </div>
                         <div className="flex gap-4 justify-center items-center">
                             <Button
@@ -220,7 +231,7 @@ const UploadPage = (): JSX.Element => {
                             <Button
                                 className="bg-primary-700 rounded px-2 py-1 text-lg"
                                 onClick={() => setMinIndex(cur => cur + viewCount)}
-                                disabled={minIndex >= flatEvents.length - viewCount}
+                                disabled={minIndex >= eventsToUpload.length - viewCount}
                             >
                                 Next Page
                             </Button>
@@ -233,13 +244,3 @@ const UploadPage = (): JSX.Element => {
 };
 
 export default UploadPage;
-
-/*
-//Leaving this here so that I don't have to keep looking up the syntax...
-import { GetServerSidePropsContext } from "next/types";
-export async function getServerSideProps(ctx: GetServerSidePropsContext): Promise<{ props: any }> {
-    return {
-        props: {  },
-    };
-}
-*/
