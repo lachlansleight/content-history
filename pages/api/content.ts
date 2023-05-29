@@ -4,9 +4,15 @@ import { NextRestApiRoute, RestError } from "lib/NextRestApiRoute";
 import { EitherContentEvent } from "lib/types";
 import Database from "lib/Database";
 
-const api = new NextRestApiRoute("/example");
+const corsOptions = {
+    methods: ["GET"],
+    origin: "*",
+};
+
+const api = new NextRestApiRoute("/content", corsOptions);
 
 api.get = async (req, res) => {
+    await Database.disconnect();
     let type: string | undefined = undefined;
     if (req.query.type) type = req.query.type as string;
 
@@ -16,8 +22,27 @@ api.get = async (req, res) => {
     let endTs: number | undefined = undefined;
     if (req.query.endTs) endTs = parseInt(req.query.endTs as string);
 
+    const count = req.query.count as string;
+    if (count === "true") {
+        const count = await Database.Instance().content.count({
+            where: {
+                type: type ? (type as ContentType) : undefined,
+                time: {
+                    gte: startTs ? new Date(startTs) : undefined,
+                    lte: endTs ? new Date(endTs) : undefined,
+                },
+            },
+        });
+        await Database.disconnect();
+        res.json({ count });
+        return;
+    }
+
     let limit: number | undefined = undefined;
     if (req.query.limit) limit = parseInt(req.query.limit as string);
+
+    let skip: number | undefined = undefined;
+    if (req.query.skip) skip = parseInt(req.query.skip as string);
 
     console.log("Fetching from DB");
     const data = await Database.Instance().content.findMany({
@@ -29,12 +54,18 @@ api.get = async (req, res) => {
             },
         },
         take: limit,
+        skip: skip,
+        orderBy: {
+            time: "desc",
+        },
     });
+    await Database.disconnect();
 
     res.json(data);
 };
 
 api.post = async (req, res) => {
+    await Database.disconnect();
     const contentToAdd = req.body.content as EitherContentEvent[];
     if (!contentToAdd) throw new RestError("No content provided", 400);
 
@@ -49,6 +80,7 @@ api.post = async (req, res) => {
 };
 
 api.delete = async (req, res) => {
+    await Database.disconnect();
     let type: string | undefined = undefined;
     if (req.query.type) type = req.query.type as string;
 
@@ -67,8 +99,9 @@ api.delete = async (req, res) => {
             },
         },
     });
+    await Database.disconnect();
 
-    res.json({ result: "success" });
+    res.json({ result: "success", type: type || "all" });
 };
 
 export default (req: NextApiRequest, res: NextApiResponse) => api.handle(req, res);
