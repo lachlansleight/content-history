@@ -1,10 +1,23 @@
 import { NextApiRequest, NextApiResponse } from "next";
+import Cors, { CorsOptions } from "cors";
 
 export class RestError extends Error {
     constructor(message: string, errorCode: number) {
         super(message, { cause: new Error(errorCode.toString()) });
     }
 }
+
+const initMiddleware = (middleware: (req: any, res: any, result: any) => any) => {
+    return (req: any, res: any) =>
+        new Promise((resolve, reject) => {
+            middleware(req, res, (result: any) => {
+                if (result instanceof Error) {
+                    return reject(result);
+                }
+                return resolve(result);
+            });
+        });
+};
 
 /** General-purpose utility class to handle API routes */
 export class NextRestApiRoute {
@@ -21,10 +34,12 @@ export class NextRestApiRoute {
     /** HTTP Delete request */
     delete: (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
+    private cors: ((req: NextApiRequest, res: NextApiResponse) => Promise<unknown>) | null;
+
     /** Initializes a new API route with the provided path. By default, all routes will return `405 not supported` errors.
      * Assign methods to the various REST verbs to allow them for this route
      */
-    constructor(path: string) {
+    constructor(path: string, corsOptions?: CorsOptions) {
         this.path = path;
         this.get = async (req, res) =>
             this.handleError(req, res, 405, new Error(`GET not supported for ${this.path}`));
@@ -36,6 +51,9 @@ export class NextRestApiRoute {
             this.handleError(req, res, 405, new Error(`PATCH not supported for ${this.path}`));
         this.delete = async (req, res) =>
             this.handleError(req, res, 405, new Error(`DELETE not supported for ${this.path}`));
+
+        if (corsOptions) this.cors = initMiddleware(Cors(corsOptions));
+        else this.cors = null;
     }
 
     /** Handles an API request - this should replace the normal API page's export default method
@@ -43,6 +61,8 @@ export class NextRestApiRoute {
      * `export default (req: NextApiRequest, res: NextApiResponse) => api.handle(req, res);`
      */
     public async handle(req: NextApiRequest, res: NextApiResponse) {
+        if (this.cors) await this.cors(req, res);
+
         try {
             if (req.method === "GET") await this.get(req, res);
             else if (req.method === "POST") await this.post(req, res);

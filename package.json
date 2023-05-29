@@ -1,7 +1,7 @@
 {
     "name": "content-history",
     "author": "@LachlanSleight",
-    "version": "0.0.1",
+    "version": "0.1.0",
     "scripts": {
         "dev": "next dev -p 3073",
         "build": "next build",
@@ -16,6 +16,7 @@
     "dependencies": {
         "@prisma/client": "^4.14.1",
         "axios": "latest",
+        "cors": "^2.8.5",
         "dayjs": "latest",
         "next": "latest",
         "react": "latest",
@@ -24,6 +25,7 @@
         "react-icons": "latest"
     },
     "devDependencies": {
+        "@types/cors": "^2.8.13",
         "@types/node": "latest",
         "@types/react": "latest",
         "@typescript-eslint/eslint-plugin": "latest",
